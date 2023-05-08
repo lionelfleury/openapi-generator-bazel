@@ -41,7 +41,7 @@ def _new_generator_command(ctx, declared_dir, rjars):
         jars = jar_delimiter.join([j.path for j in jars]),
         spec = ctx.file.spec.path,
         generator = ctx.attr.generator,
-        output = declared_dir.path,
+        output = declared_dir,
     )
 
     gen_cmd += ' -p "{properties}"'.format(
@@ -102,7 +102,16 @@ def _impl(ctx):
     jars = _collect_jars(ctx.attr.deps)
     (cjars, rjars) = (jars.compiletime, jars.runtime)
 
-    declared_dir = ctx.actions.declare_directory("%s" % (ctx.attr.name))
+    if ctx.attr.output_dir and ctx.attr.outs:
+        fail("Only one of output_dir and outs may be specified")
+    if not ctx.attr.output_dir and not ctx.attr.outs:
+        fail("One of output_dir and outs must be specified")
+
+    outputs = [ctx.actions.declare_directory(ctx.attr.name)]
+    output_dir = outputs[0].path
+    if ctx.attr.outs:
+        for o in ctx.attr.outs:
+            outputs.append(ctx.actions.declare_file(o))
 
     inputs = [
         ctx.file.openapi_generator_cli,
@@ -119,18 +128,17 @@ def _impl(ctx):
     ctx.actions.run_shell(
         inputs = inputs,
         command = "mkdir -p {gen_dir} && {generator_command}".format(
-            gen_dir = declared_dir.path,
-            generator_command = _new_generator_command(ctx, declared_dir, rjars),
+            gen_dir = output_dir,
+            generator_command = _new_generator_command(ctx, output_dir, rjars),
         ),
-        outputs = [declared_dir],
+        outputs = outputs,
         tools = ctx.files._jdk,
     )
 
-    srcs = declared_dir.path
+    if ctx.attr.outs:
+        outputs = outputs[1:]
 
-    return DefaultInfo(files = depset([
-        declared_dir,
-    ]))
+    return DefaultInfo(files = depset(outputs))
 
 # taken from rules_scala
 def _collect_jars(targets):
@@ -164,6 +172,8 @@ def _collect_jars(targets):
 
 _openapi_generator = rule(
     attrs = {
+        "outs": attr.string_list(),
+        "output_dir": attr.bool(),
         # downstream dependencies
         "deps": attr.label_list(allow_files = True),
         # openapi spec file
